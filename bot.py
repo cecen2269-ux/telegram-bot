@@ -1,103 +1,57 @@
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
     ContextTypes,
+    MessageHandler,
     filters
 )
 
-TOKEN = "8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s"
-
-waiting_user = None
-active_chats = {}
-
+# 🔑 BOT TOKEN
+TOKEN = "8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s" 
+# /start komutu
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global waiting_user, active_chats
-
-    user_id = update.effective_user.id
-
-    # resetle
-    waiting_user = None
-    if user_id in active_chats:
-        partner = active_chats.pop(user_id)
-        active_chats.pop(partner, None)
-
     keyboard = [
-        [InlineKeyboardButton("🚀 Sohbet partneri bul", callback_data="find")],
-        [InlineKeyboardButton("❌ Sohbeti bitir", callback_data="stop")]
+        ["🚀 Sohbet partneri bul"],
+        ["👤 Profil"],
+        ["💎 Premium abonelik"],
+        ["📜 Kurallar"],
+        ["🌐 Language"]
     ]
 
-    await update.message.reply_text(
-        "👋 Hoş geldin!\nAnonim sohbet botuna hazır mısın?",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+    reply_markup = ReplyKeyboardMarkup(
+        keyboard,
+        resize_keyboard=True
     )
-# Butonlar
-async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global waiting_user
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
 
-    if query.data == "find":
-        if user_id in active_chats:
-            await query.message.reply_text("⚠️ Zaten bir sohbettesin.")
-            return
+    await update.message.reply_text(
+        "👋 Anonim Sohbete Hoş Geldiniz!\n\n"
+        "Anketiniz aktif. Sohbet etmeye başlamak için\n"
+        "🚀 Sohbet partneri bul'a tıklayın.",
+        reply_markup=reply_markup
+    )
 
-        if waiting_user is None:
-            waiting_user = user_id
-            await query.message.reply_text("⏳ Partner aranıyor...")
-        else:
-            partner = waiting_user
-            waiting_user = None
+# Butonlara basılınca (şimdilik cevap versin diye)
+async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
 
-            active_chats[user_id] = partner
-            active_chats[partner] = user_id
+    if text == "🚀 Sohbet partneri bul":
+        await update.message.reply_text("🔍 Sohbet partneri aranıyor...")
+    elif text == "👤 Profil":
+        await update.message.reply_text("👤 Profil yakında eklenecek.")
+    elif text == "💎 Premium abonelik":
+        await update.message.reply_text("💎 Premium yakında.")
+    elif text == "📜 Kurallar":
+        await update.message.reply_text("📜 Kurallar yakında.")
+    elif text == "🌐 Language":
+        await update.message.reply_text("🌐 Dil seçimi yakında.")
 
-            await context.bot.send_message(partner, "✅ Partner bulundu! Sohbet başladı.")
-            await context.bot.send_message(user_id, "✅ Partner bulundu! Sohbet başladı.")
-
-    elif query.data == "stop":
-        await stop_chat(user_id, context)
-
-# Mesaj iletme
-async def relay(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-
-    if user_id in active_chats:
-        partner = active_chats[user_id]
-        await context.bot.send_message(partner, update.message.text)
-    else:
-        await update.message.reply_text("❗ Önce partner bulmalısın.")
-
-# /next
-async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    await stop_chat(user_id, context)
-    global waiting_user
-    waiting_user = user_id
-    await update.message.reply_text("🔄 Yeni partner aranıyor...")
-
-# Sohbet bitir
-async def stop_chat(user_id, context):
-    if user_id in active_chats:
-        partner = active_chats.pop(user_id)
-        active_chats.pop(partner, None)
-        await context.bot.send_message(partner, "❌ Partner sohbeti bitirdi.")
-        await context.bot.send_message(user_id, "❌ Sohbet bitirildi.")
-    else:
-        await context.bot.send_message(user_id, "⚠️ Aktif sohbet yok.")
-
-# MAIN
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("next", next_chat))
-    app.add_handler(CallbackQueryHandler(buttons))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
 
     print("🤖 Bot çalışıyor...")
     app.run_polling()
