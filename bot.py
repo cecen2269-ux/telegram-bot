@@ -1,195 +1,150 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ContextTypes,
+    filters
+)
+import json
+import os
 
-TOKEN = "BURAYA_TOKENİN"
+# ================== AYARLAR ==================
+TOKEN = "8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s" 
+ADMIN_ID = 123456789  # kendi telegram ID'n
 
+PREMIUM_FILE = "premium.json"
+
+waiting_user = None
 waiting_premium = None
-waiting_normal = None
 active_chats = {}
 
-profiles = {}
-premium_users = set()
-premium_only_mode = set()  # Premium odayı açanlar
+# ================== PREMIUM JSON ==================
+def load_premium():
+    if not os.path.exists(PREMIUM_FILE):
+        return set()
+    with open(PREMIUM_FILE, "r") as f:
+        return set(json.load(f))
 
-# START
+def save_premium(data):
+    with open(PREMIUM_FILE, "w") as f:
+        json.dump(list(data), f)
+
+premium_users = load_premium()
+
+# ================== /start ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🚀 Sohbet Bul", callback_data="find")],
         [InlineKeyboardButton("👤 Profil", callback_data="profile")],
         [InlineKeyboardButton("💎 Premium", callback_data="premium")],
-        [InlineKeyboardButton("🎯 Premium Oda", callback_data="premium_room")],
         [InlineKeyboardButton("📜 Kurallar", callback_data="rules")]
     ]
+
     await update.message.reply_text(
-        "👋 Hoş geldin!\nAnonim Sohbet Botu",
+        "👋 Hoş geldin!\nAnonim sohbet botu",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# BUTONLAR
+# ================== BUTONLAR ==================
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global waiting_premium, waiting_normal
+    global waiting_user, waiting_premium
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
 
-    # KURALLAR
-    if query.data == "rules":
+    # -------- PROFİL --------
+    if query.data == "profile":
+        status = "💎 Premium" if user_id in premium_users else "👤 Normal"
+        await query.message.reply_text(
+            f"👤 PROFİL\n\nID: `{user_id}`\nDurum: {status}",
+            parse_mode="Markdown"
+        )
+
+    # -------- KURALLAR --------
+    elif query.data == "rules":
         await query.message.reply_text(
             "📜 KURALLAR\n\n"
             "1️⃣ Küfür yasak\n"
             "2️⃣ Reklam yasak\n"
             "3️⃣ +18 yasak\n"
-            "4️⃣ Uymayanlar banlanır"
+            "4️⃣ Uymayan banlanır"
         )
-        return
 
-    # PREMIUM SATIN AL (DEMO)
-    if query.data == "premium":
+    # -------- PREMIUM --------
+    elif query.data == "premium":
         if user_id in premium_users:
-            await query.message.reply_text("💎 Zaten Premiumsun!")
+            await query.message.reply_text("💎 Zaten premiumsun!")
         else:
             premium_users.add(user_id)
-            await query.message.reply_text(
-                "🎉 PREMIUM AKTİF!\n\n"
-                "✅ Öncelikli eşleşme\n"
-                "✅ Premium oda\n"
-                "✅ Premium rozet"
-            )
-        return
+            save_premium(premium_users)
+            await query.message.reply_text("🎉 Premium aktif edildi!")
 
-    # PREMIUM ODA (SADECE PREMIUM)
-    if query.data == "premium_room":
-        if user_id not in premium_users:
-            await query.message.reply_text("❌ Premium olmadan giremezsin.")
-            return
-
-        if user_id in premium_only_mode:
-            premium_only_mode.remove(user_id)
-            await query.message.reply_text("❌ Premium oda KAPALI.")
-        else:
-            premium_only_mode.add(user_id)
-            await query.message.reply_text("🎯 Premium oda AÇIK!\nSadece premiumlarla eşleşirsin.")
-        return
-
-    # PROFİL
-    if query.data == "profile":
-        badge = " 💎" if user_id in premium_users else ""
-        profile = profiles.get(user_id)
-
-        if not profile:
-            profiles[user_id] = {"step": "name"}
-            await query.message.reply_text("👤 İsmini yaz:")
-        else:
-            await query.message.reply_text(
-                f"👤 Profil{badge}\n\n"
-                f"İsim: {profile['name']}\n"
-                f"Yaş: {profile['age']}\n"
-                f"Bio: {profile['bio']}"
-            )
-        return
-
-    # SOHBET BUL
-    if query.data == "find":
+    # -------- SOHBET BUL --------
+    elif query.data == "find":
         if user_id in active_chats:
             await query.message.reply_text("⚠️ Zaten sohbetteyiz.")
             return
 
-        is_premium = user_id in premium_users
-        wants_premium_only = user_id in premium_only_mode
-
-        # PREMIUM ODA
-        if wants_premium_only:
-            if waiting_premium and waiting_premium != user_id:
+        # PREMIUM KULLANICI
+        if user_id in premium_users:
+            if waiting_premium is None:
+                waiting_premium = user_id
+                await query.message.reply_text("💎 Premium partner aranıyor...")
+            else:
                 partner = waiting_premium
                 waiting_premium = None
-            else:
-                waiting_premium = user_id
-                await query.message.reply_text("🎯 Premium partner aranıyor...")
-                return
-
-        # NORMAL PREMIUM ÖNCELİK
-        elif is_premium:
-            if waiting_premium:
-                partner = waiting_premium
-                waiting_premium = None
-            elif waiting_normal:
-                partner = waiting_normal
-                waiting_normal = None
-            else:
-                waiting_premium = user_id
-                await query.message.reply_text("💎 Öncelikli eşleşme aranıyor...")
-                return
+                active_chats[user_id] = partner
+                active_chats[partner] = user_id
+                await context.bot.send_message(user_id, "💎 Premium eş bulundu!")
+                await context.bot.send_message(partner, "💎 Premium eş bulundu!")
 
         # NORMAL KULLANICI
         else:
-            if waiting_premium:
-                partner = waiting_premium
-                waiting_premium = None
-            elif waiting_normal:
-                partner = waiting_normal
-                waiting_normal = None
-            else:
-                waiting_normal = user_id
+            if waiting_user is None:
+                waiting_user = user_id
                 await query.message.reply_text("⏳ Partner aranıyor...")
-                return
+            else:
+                partner = waiting_user
+                waiting_user = None
+                active_chats[user_id] = partner
+                active_chats[partner] = user_id
+                await context.bot.send_message(user_id, "✅ Eş bulundu!")
+                await context.bot.send_message(partner, "✅ Eş bulundu!")
 
-        active_chats[user_id] = partner
-        active_chats[partner] = user_id
-
-        await context.bot.send_message(partner, "✅ Partner bulundu! Sohbet başladı.")
-        await query.message.reply_text("✅ Partner bulundu! Sohbet başladı.")
-
-# MESAJLAR
+# ================== MESAJ AKTAR ==================
 async def messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    text = update.message.text
 
-    # PROFİL KAYIT
-    if user_id in profiles and "step" in profiles[user_id]:
-        step = profiles[user_id]["step"]
-
-        if step == "name":
-            profiles[user_id]["name"] = text
-            profiles[user_id]["step"] = "age"
-            await update.message.reply_text("🎂 Yaşını yaz:")
-            return
-
-        if step == "age":
-            if not text.isdigit():
-                await update.message.reply_text("❌ Sayı gir.")
-                return
-            profiles[user_id]["age"] = text
-            profiles[user_id]["step"] = "bio"
-            await update.message.reply_text("📝 Bio yaz:")
-            return
-
-        if step == "bio":
-            profiles[user_id]["bio"] = text
-            profiles[user_id].pop("step")
-            await update.message.reply_text("✅ Profil tamamlandı!")
-            return
-
-    # SOHBET AKTAR
     if user_id in active_chats:
         partner = active_chats[user_id]
-        badge = "💎 " if user_id in premium_users else ""
-        await context.bot.send_message(partner, f"{badge}{text}")
+        await context.bot.send_message(partner, update.message.text)
 
-# MAIN
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(buttons))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, messages))
-    print("🤖 Bot çalışıyor")
-    app.run_polling()
+# ================== ADMIN ==================
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id != ADMIN_ID:
+        return
 
-if __name__ == "__main__":
-    main()
+    try:
+        target = int(context.args[0])
+        premium_users.add(target)
+        save_premium(premium_users)
+        await update.message.reply_text("✅ Premium verildi.")
+    except:
+        await update.message.reply_text("❌ Kullanım: /admin ID")
 
-    
-         
+# ================== MAIN ==================
+app = ApplicationBuilder().token(TOKEN).build()
 
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("admin", admin))
+app.add_handler(CallbackQueryHandler(buttons))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, messages))
 
-            
-    
+print("🤖 Bot çalışıyor...")
+app.run_polling()
