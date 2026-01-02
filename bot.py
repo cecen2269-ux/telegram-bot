@@ -9,7 +9,7 @@ from telegram.ext import (
     filters
 )
 
-TOKEN = "8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s" 
+TOKEN = "8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s"
 
 waiting_user = None
 active_chats = {}
