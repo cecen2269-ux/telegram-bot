@@ -14,17 +14,26 @@ TOKEN = "8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s"
 waiting_user = None
 active_chats = {}
 
-# /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global waiting_user, active_chats
+
+    user_id = update.effective_user.id
+
+    # resetle
+    waiting_user = None
+    if user_id in active_chats:
+        partner = active_chats.pop(user_id)
+        active_chats.pop(partner, None)
+
     keyboard = [
         [InlineKeyboardButton("🚀 Sohbet partneri bul", callback_data="find")],
         [InlineKeyboardButton("❌ Sohbeti bitir", callback_data="stop")]
     ]
+
     await update.message.reply_text(
         "👋 Hoş geldin!\nAnonim sohbet botuna hazır mısın?",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-
 # Butonlar
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global waiting_user
