@@ -1,63 +1,101 @@
-
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
-    ContextTypes,
+    CallbackQueryHandler,
     MessageHandler,
+    ContextTypes,
     filters
 )
 
-# 🔑 BOT TOKEN
-TOKEN = "8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s" 
-# /start komutu
+TOKEN="8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s" 
+waiting_user = None
+active_chats = {}
+
+# /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        ["🚀 Sohbet partneri bul"],
-        ["👤 Profil"],
-        ["💎 Premium abonelik"],
-        ["📜 Kurallar"],
-        ["🌐 Language"]
+        [InlineKeyboardButton("🚀 Sohbet partneri bul", callback_data="find")],
+        [InlineKeyboardButton("❌ Sohbeti bitir", callback_data="stop")]
     ]
 
-    reply_markup = ReplyKeyboardMarkup(
-        keyboard,
-        resize_keyboard=True
-    )
-
     await update.message.reply_text(
-        "👋 Anonim Sohbete Hoş Geldiniz!\n\n"
-        "Anketiniz aktif. Sohbet etmeye başlamak için\n"
-        "🚀 Sohbet partneri bul'a tıklayın.",
-        reply_markup=reply_markup
+        "👋 Anonim Sohbete Hoş Geldin!\n\nBaşlamak için butona tıkla 👇",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# Butonlara basılınca (şimdilik cevap versin diye)
-async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
+# Butonlar
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global waiting_user, active_chats
 
-    if text == "🚀 Sohbet partneri bul":
-        await update.message.reply_text("🔍 Sohbet partneri aranıyor...")
-    elif text == "👤 Profil":
-        await update.message.reply_text("👤 Profil yakında eklenecek.")
-    elif text == "💎 Premium abonelik":
-        await update.message.reply_text("💎 Premium yakında.")
-    elif text == "📜 Kurallar":
-        await update.message.reply_text("📜 Kurallar yakında.")
-    elif text == "🌐 Language":
-        await update.message.reply_text("🌐 Dil seçimi yakında.")
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
 
+    # Sohbet bul
+    if query.data == "find":
+        if user_id in active_chats:
+            await query.message.reply_text("⚠️ Zaten bir sohbetteyiz.")
+            return
+
+        if waiting_user is None:
+            waiting_user = user_id
+            await query.message.reply_text("⏳ Partner aranıyor...")
+        else:
+            partner = waiting_user
+            waiting_user = None
+
+            active_chats[user_id] = partner
+            active_chats[partner] = user_id
+
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="✅ Partner bulundu! Sohbete başlayabilirsiniz."
+            )
+            await context.bot.send_message(
+                chat_id=partner,
+                text="✅ Partner bulundu! Sohbete başlayabilirsiniz."
+            )
+
+    # Sohbet bitir
+    elif query.data == "stop":
+        if user_id in active_chats:
+            partner = active_chats.pop(user_id)
+            active_chats.pop(partner, None)
+
+            await context.bot.send_message(
+                chat_id=partner,
+                text="❌ Karşı taraf sohbeti bitirdi."
+            )
+            await query.message.reply_text("❌ Sohbeti bitirdin.")
+        else:
+            await query.message.reply_text("ℹ️ Aktif sohbet yok.")
+
+# Mesaj iletme
+async def relay(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if user_id in active_chats:
+        partner = active_chats[user_id]
+        await context.bot.send_message(
+            chat_id=partner,
+            text=update.message.text
+        )
+
+# Main
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
+    app.add_handler(CallbackQueryHandler(buttons))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay))
 
     print("🤖 Bot çalışıyor...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-
-    
-
