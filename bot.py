@@ -1,241 +1,204 @@
 import os
 import sqlite3
-import time
+import logging
 from datetime import datetime, timedelta
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup,
+    LabeledPrice
+)
 from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    filters
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ContextTypes, filters, CallbackQueryHandler
 )
 
-# =====================
-# AYARLAR
-# =====================
-BOT_TOKEN = os.environ.get("BOT_TOKEN") or "8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s" 
-ADMIN_ID = 7560308386  # KENDİ ID'N
+# ================= CONFIG =================
+BOT_TOKEN = os.getenv("8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s") 
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN", "")  # Telegram payment
+DB_FILE = "bot.db"
 
-DB_NAME = "bot.db"
-FLOOD_SECONDS = 2
+DAILY_LIMIT_FREE = 50
 
-# =====================
-# DATABASE
-# =====================
-conn = sqlite3.connect(DB_NAME, check_same_thread=False)
-cur = conn.cursor()
+# ================= LOG =================
+logging.basicConfig(level=logging.INFO)
+
+# ================= DB =================
+db = sqlite3.connect(DB_FILE, check_same_thread=False)
+cur = db.cursor()
 
 cur.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
-    username TEXT,
-    joined_at TEXT,
-    premium_until TEXT,
+    gender TEXT,
+    interest TEXT,
+    premium INTEGER DEFAULT 0,
     banned INTEGER DEFAULT 0,
-    last_message INTEGER DEFAULT 0,
-    partner INTEGER
+    daily_count INTEGER DEFAULT 0,
+    last_reset TEXT
 )
 """)
 
 cur.execute("""
-CREATE TABLE IF NOT EXISTS match_queue (
-    user_id INTEGER PRIMARY KEY,
-    premium INTEGER
+CREATE TABLE IF NOT EXISTS chats (
+    u1 INTEGER,
+    u2 INTEGER
 )
 """)
-conn.commit()
 
-# =====================
-# YARDIMCI
-# =====================
-def is_admin(uid): 
-    return uid == ADMIN_ID
+db.commit()
 
-def get_user(uid):
-    cur.execute("SELECT * FROM users WHERE user_id=?", (uid,))
-    return cur.fetchone()
-
-def add_user(user):
-    if not get_user(user.id):
-        cur.execute(
-            "INSERT INTO users VALUES (?,?,?,?,?,?,?)",
-            (user.id, user.username, datetime.now().isoformat(), None, 0, 0, None)
-        )
-        conn.commit()
-
+# ================= HELPERS =================
 def is_premium(uid):
-    u = get_user(uid)
-    if not u or not u[3]:
-        return False
-    return datetime.fromisoformat(u[3]) > datetime.now()
-
-def flood_ok(uid):
-    now = int(time.time())
-    u = get_user(uid)
-    if not u:
-        return True
-    if now - u[5] < FLOOD_SECONDS:
-        return False
-    cur.execute("UPDATE users SET last_message=? WHERE user_id=?", (now, uid))
-    conn.commit()
-    return True
-
-def get_partner(uid):
-    cur.execute("SELECT partner FROM users WHERE user_id=?", (uid,))
+    cur.execute("SELECT premium FROM users WHERE user_id=?", (uid,))
     r = cur.fetchone()
-    return r[0] if r else None
+    return r and r[0] == 1
 
-def set_partner(a, b):
-    cur.execute("UPDATE users SET partner=? WHERE user_id=?", (b, a))
-    cur.execute("UPDATE users SET partner=? WHERE user_id=?", (a, b))
-    conn.commit()
+def reset_daily(uid):
+    cur.execute("SELECT last_reset FROM users WHERE user_id=?", (uid,))
+    r = cur.fetchone()
+    today = datetime.now().date().isoformat()
+    if not r or r[0] != today:
+        cur.execute("UPDATE users SET daily_count=0, last_reset=? WHERE user_id=?", (today, uid))
+        db.commit()
 
-def clear_partner(uid):
-    cur.execute("UPDATE users SET partner=NULL WHERE user_id=?", (uid,))
-    conn.commit()
+# ================= START =================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
 
-# =====================
-# MENÜ
-# =====================
-def main_menu():
-    return InlineKeyboardMarkup([
+    cur.execute("INSERT OR IGNORE INTO users (user_id,last_reset) VALUES (?,?)",
+                (uid, datetime.now().date().isoformat()))
+    db.commit()
+
+    kb = [
         [InlineKeyboardButton("💬 Eşleş", callback_data="match")],
         [InlineKeyboardButton("👤 Profil", callback_data="profile")],
         [InlineKeyboardButton("💎 Premium", callback_data="premium")]
-    ])
+    ]
 
-# =====================
-# /start
-# =====================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    add_user(update.effective_user)
     await update.message.reply_text(
         "👑 Hoş geldin!\nAnonim sohbet botu",
-        reply_markup=main_menu()
+        reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# =====================
-# BUTONLAR
-# =====================
-async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ================= PROFILE =================
+async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+
+    cur.execute("SELECT gender,interest,premium FROM users WHERE user_id=?", (q.from_user.id,))
+    g, i, p = cur.fetchone()
+
+    txt = f"""
+👤 Profil
+Cinsiyet: {g or 'Belirtilmedi'}
+İlgi: {i or 'Belirtilmedi'}
+Premium: {'✅' if p else '❌'}
+"""
+    await q.message.reply_text(txt)
+
+# ================= MATCH =================
+waiting = []
+
+async def match(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
     uid = q.from_user.id
+    await q.answer()
 
-    if q.data == "profile":
-        p = "💎 Premium" if is_premium(uid) else "🆓 Normal"
-        await q.edit_message_text(
-            f"👤 Profil\n\n🆔 {uid}\n⭐ {p}",
-            reply_markup=main_menu()
-        )
-
-    elif q.data == "premium":
-        await q.edit_message_text(
-            "💎 Premium\n\n"
-            "• Öncelikli eşleşme\n"
-            "• Sınırsız sohbet\n\n"
-            "💳 Ödeme sonrası admin premium verir.",
-            reply_markup=main_menu()
-        )
-
-    elif q.data == "match":
-        if get_partner(uid):
-            await q.edit_message_text("❗ Zaten eşleşmişsin.")
-            return
-
-        premium = 1 if is_premium(uid) else 0
-
-        # Premium öncelikli arama
-        cur.execute("""
-            SELECT user_id FROM match_queue
-            WHERE user_id!=?
-            ORDER BY premium DESC
-            LIMIT 1
-        """, (uid,))
-        other = cur.fetchone()
-
-        if other:
-            other_id = other[0]
-            cur.execute("DELETE FROM match_queue WHERE user_id IN (?,?)", (uid, other_id))
-            set_partner(uid, other_id)
-
-            await context.bot.send_message(
-                other_id, "✅ Eşleştin! Yazabilirsin.\n/leave"
-            )
-            await q.edit_message_text("✅ Eşleştin! Yazabilirsin.\n/leave")
-        else:
-            cur.execute(
-                "INSERT OR IGNORE INTO match_queue VALUES (?,?)",
-                (uid, premium)
-            )
-            conn.commit()
-            await q.edit_message_text("⏳ Eşleşme bekleniyor...")
-
-# =====================
-# CHAT
-# =====================
-async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if not flood_ok(uid):
+    if uid in waiting:
+        await q.message.reply_text("⏳ Zaten bekliyorsun")
         return
 
-    partner = get_partner(uid)
-    if partner:
-        await context.bot.send_message(partner, update.message.text)
-    else:
-        await update.message.reply_text(
-            "Menüyü kullan kral 👑",
-            reply_markup=main_menu()
-        )
+    waiting.append(uid)
+    await q.message.reply_text("⏳ Eşleşme bekleniyor...")
 
-# =====================
-# LEAVE
-# =====================
-async def leave(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(waiting) >= 2:
+        u1 = waiting.pop(0)
+        u2 = waiting.pop(0)
+        cur.execute("INSERT INTO chats VALUES (?,?)", (u1, u2))
+        db.commit()
+
+        await context.bot.send_message(u1, "✅ Eşleştin! Yazabilirsin.")
+        await context.bot.send_message(u2, "✅ Eşleştin! Yazabilirsin.")
+
+# ================= MESSAGE =================
+async def relay(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    partner = get_partner(uid)
-    if partner:
-        clear_partner(uid)
-        clear_partner(partner)
-        await context.bot.send_message(partner, "❌ Karşı taraf sohbeti bitirdi.")
-        await update.message.reply_text(
-            "❌ Sohbet bitti.",
-            reply_markup=main_menu()
-        )
 
-# =====================
-# ADMIN
-# =====================
-async def addpremium(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+    cur.execute("SELECT banned FROM users WHERE user_id=?", (uid,))
+    if cur.fetchone()[0]:
+        return
+
+    reset_daily(uid)
+
+    cur.execute("SELECT daily_count FROM users WHERE user_id=?", (uid,))
+    count = cur.fetchone()[0]
+
+    if not is_premium(uid) and count >= DAILY_LIMIT_FREE:
+        await update.message.reply_text("❌ Günlük limit doldu (Premium al)")
+        return
+
+    cur.execute("UPDATE users SET daily_count=daily_count+1 WHERE user_id=?", (uid,))
+    db.commit()
+
+    cur.execute("SELECT u1,u2 FROM chats WHERE u1=? OR u2=?", (uid, uid))
+    r = cur.fetchone()
+    if not r:
+        return
+
+    target = r[1] if r[0] == uid else r[0]
+    await context.bot.send_message(target, update.message.text)
+
+# ================= PREMIUM =================
+async def premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    kb = [[InlineKeyboardButton("💳 Premium Satın Al", callback_data="buy")]]
+    await q.message.reply_text(
+        "💎 Premium\n• Öncelikli eşleşme\n• Limitsiz sohbet",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
+async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    await context.bot.send_invoice(
+        chat_id=q.from_user.id,
+        title="Premium",
+        description="Sınırsız kullanım",
+        payload="premium",
+        provider_token=PROVIDER_TOKEN,
+        currency="TRY",
+        prices=[LabeledPrice("Premium", 9900)]
+    )
+
+async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    cur.execute("UPDATE users SET premium=1 WHERE user_id=?", (uid,))
+    db.commit()
+    await update.message.reply_text("💎 Premium aktif!")
+
+# ================= ADMIN =================
+async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
         return
     uid = int(context.args[0])
-    days = int(context.args[1])
-    until = datetime.now() + timedelta(days=days)
-    cur.execute(
-        "UPDATE users SET premium_until=? WHERE user_id=?",
-        (until.isoformat(), uid)
-    )
-    conn.commit()
-    await update.message.reply_text("✅ Premium verildi")
+    cur.execute("UPDATE users SET banned=1 WHERE user_id=?", (uid,))
+    db.commit()
+    await update.message.reply_text("✅ Banlandı")
 
-# =====================
-# MAIN
-# =====================
-def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+# ================= MAIN =================
+app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("leave", leave))
-    app.add_handler(CommandHandler("addpremium", addpremium))
-    app.add_handler(CallbackQueryHandler(buttons))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(match, pattern="match"))
+app.add_handler(CallbackQueryHandler(profile, pattern="profile"))
+app.add_handler(CallbackQueryHandler(premium, pattern="premium"))
+app.add_handler(CallbackQueryHandler(buy, pattern="buy"))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay))
+app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
+app.add_handler(CommandHandler("ban", ban))
 
-    print("🔥 BOT ÇALIŞIYOR")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+app.run_polling()
