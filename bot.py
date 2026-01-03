@@ -17,7 +17,7 @@ from telegram.ext import (
 # AYARLAR
 # =====================
 BOT_TOKEN = os.environ.get("BOT_TOKEN") or "8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s" 
-ADMIN_ID = 123456789
+ADMIN_ID = 7560308386  # KENDİ ID'N
 
 DB_NAME = "bot.db"
 FLOOD_SECONDS = 2
@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS users (
 
 cur.execute("""
 CREATE TABLE IF NOT EXISTS match_queue (
-    user_id INTEGER PRIMARY KEY
+    user_id INTEGER PRIMARY KEY,
+    premium INTEGER
 )
 """)
 conn.commit()
@@ -50,7 +51,8 @@ conn.commit()
 # =====================
 # YARDIMCI
 # =====================
-def is_admin(uid): return uid == ADMIN_ID
+def is_admin(uid): 
+    return uid == ADMIN_ID
 
 def get_user(uid):
     cur.execute("SELECT * FROM users WHERE user_id=?", (uid,))
@@ -66,14 +68,17 @@ def add_user(user):
 
 def is_premium(uid):
     u = get_user(uid)
-    if not u or not u[3]: return False
+    if not u or not u[3]:
+        return False
     return datetime.fromisoformat(u[3]) > datetime.now()
 
 def flood_ok(uid):
     now = int(time.time())
     u = get_user(uid)
-    if not u: return True
-    if now - u[5] < FLOOD_SECONDS: return False
+    if not u:
+        return True
+    if now - u[5] < FLOOD_SECONDS:
+        return False
     cur.execute("UPDATE users SET last_message=? WHERE user_id=?", (now, uid))
     conn.commit()
     return True
@@ -130,8 +135,8 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif q.data == "premium":
         await q.edit_message_text(
             "💎 Premium\n\n"
-            "• Sınırsız eşleşme\n"
-            "• Öncelikli eşleşme\n\n"
+            "• Öncelikli eşleşme\n"
+            "• Sınırsız sohbet\n\n"
             "💳 Ödeme sonrası admin premium verir.",
             reply_markup=main_menu()
         )
@@ -141,7 +146,15 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text("❗ Zaten eşleşmişsin.")
             return
 
-        cur.execute("SELECT user_id FROM match_queue WHERE user_id!=? LIMIT 1", (uid,))
+        premium = 1 if is_premium(uid) else 0
+
+        # Premium öncelikli arama
+        cur.execute("""
+            SELECT user_id FROM match_queue
+            WHERE user_id!=?
+            ORDER BY premium DESC
+            LIMIT 1
+        """, (uid,))
         other = cur.fetchone()
 
         if other:
@@ -154,7 +167,10 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await q.edit_message_text("✅ Eşleştin! Yazabilirsin.\n/leave")
         else:
-            cur.execute("INSERT OR IGNORE INTO match_queue VALUES (?)", (uid,))
+            cur.execute(
+                "INSERT OR IGNORE INTO match_queue VALUES (?,?)",
+                (uid, premium)
+            )
             conn.commit()
             await q.edit_message_text("⏳ Eşleşme bekleniyor...")
 
@@ -163,7 +179,8 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =====================
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if not flood_ok(uid): return
+    if not flood_ok(uid):
+        return
 
     partner = get_partner(uid)
     if partner:
@@ -184,13 +201,17 @@ async def leave(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clear_partner(uid)
         clear_partner(partner)
         await context.bot.send_message(partner, "❌ Karşı taraf sohbeti bitirdi.")
-        await update.message.reply_text("❌ Sohbet bitti.", reply_markup=main_menu())
+        await update.message.reply_text(
+            "❌ Sohbet bitti.",
+            reply_markup=main_menu()
+        )
 
 # =====================
 # ADMIN
 # =====================
 async def addpremium(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id): return
+    if not is_admin(update.effective_user.id):
+        return
     uid = int(context.args[0])
     days = int(context.args[1])
     until = datetime.now() + timedelta(days=days)
