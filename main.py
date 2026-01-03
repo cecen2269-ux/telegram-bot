@@ -2,16 +2,16 @@ import os
 from flask import Flask, request
 import requests
 
-BOT_TOKEN = "8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s"
+BOT_TOKEN = os.environ.get("8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s")
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 app = Flask(__name__)
 
 @app.route("/", methods=["GET"])
 def index():
-    return "Bot çalışıyor kral 👑", 200
+    return "Bot çalışıyor kral 👑"
 
-@app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
+@app.route("/webhook", methods=["POST"])
 def webhook():
     update = request.get_json()
 
@@ -20,12 +20,11 @@ def webhook():
         text = update["message"].get("text", "")
 
         if text == "/start":
-            send_message(chat_id, "🔥 Anonim Flört Botu aktif!\nSeçimini yap 👇")
+            send_message(chat_id, "Hoş geldin kral 👑 Bot aktif.")
         else:
-            send_message(chat_id, f"Mesaj alındı: {text}")
+            send_message(chat_id, f"Yazdığın: {text}")
 
     return "ok", 200
-
 
 def send_message(chat_id, text):
     url = f"{TELEGRAM_API}/sendMessage"
@@ -35,6 +34,5 @@ def send_message(chat_id, text):
     }
     requests.post(url, json=data)
 
-
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    app.run(host="0.0.0.0", port=10000)
