@@ -1,194 +1,131 @@
-from telegram import *
-from telegram.ext import *
-import time
+import os
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    CallbackQueryHandler,
+    filters
+)
 
-TOKEN = "8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s"
+# ======================
+# AYARLAR
+# ======================
+BOT_TOKEN = os.environ.get("BOT_TOKEN") or "8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s" 
+ADMIN_ID = 123456789  # kendi Telegram ID
 
-# ------------------ VERİLER ------------------
-users = {}
-waiting = []
-chats = {}
-daily_limit = {}
+users = set()
 premium_users = set()
-banned = set()
 
-DAILY_FREE_LIMIT = 5
-
-bad_words = ["küfür", "orospu", "sik"]
-
-# ------------------ START ------------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-
-    if uid in banned:
-        await update.message.reply_text("🚫 Bu bottan yasaklandın.")
-        return
-
-    users.setdefault(uid, {
-        "gender": None,
-        "age": None,
-        "looking": None,
-        "bio": "",
-        "premium": False
-    })
-
-    kb = [
-        [InlineKeyboardButton("🚀 Sohbet Bul", callback_data="find")],
+# ======================
+# MENÜ
+# ======================
+def main_menu():
+    keyboard = [
         [InlineKeyboardButton("👤 Profil", callback_data="profile")],
         [InlineKeyboardButton("💎 Premium", callback_data="premium")],
-        [InlineKeyboardButton("📜 Kurallar", callback_data="rules")]
+        [InlineKeyboardButton("📞 Destek", callback_data="support")]
     ]
+    return InlineKeyboardMarkup(keyboard)
+
+# ======================
+# /start
+# ======================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    users.add(user_id)
 
     await update.message.reply_text(
-        "🔥 *Anonim Flört Botu*\n\nSeçimini yap:",
-        reply_markup=InlineKeyboardMarkup(kb),
-        parse_mode="Markdown"
+        "👑 Hoş geldin kral!\n\nMenüden devam et:",
+        reply_markup=main_menu()
     )
 
-# ------------------ BUTTONS ------------------
+# ======================
+# BUTONLAR
+# ======================
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    uid = q.from_user.id
+    query = update.callback_query
+    await query.answer()
 
-    if q.data == "rules":
-        await q.message.reply_text(
-            "📜 *Kurallar*\n\n"
-            "• Küfür yasak\n"
-            "• Reklam yasak\n"
-            "• +18 içerik yasak\n"
-            "• Rahatsız eden banlanır",
-            parse_mode="Markdown"
+    user_id = query.from_user.id
+
+    if query.data == "profile":
+        status = "💎 Premium" if user_id in premium_users else "🆓 Normal"
+        await query.edit_message_text(
+            f"👤 Profilin\n\n"
+            f"🆔 ID: {user_id}\n"
+            f"⭐ Durum: {status}",
+            reply_markup=main_menu()
         )
 
-    elif q.data == "premium":
-        premium_users.add(uid)
-        users[uid]["premium"] = True
-        await q.message.reply_text("💎 Premium aktif! Limitsiz sohbet.")
-
-    elif q.data == "profile":
-        u = users[uid]
-        text = (
-            "📝 *Profil*\n\n"
-            f"👤 Cinsiyet: {u['gender']}\n"
-            f"🎂 Yaş: {u['age']}\n"
-            f"❤️ Arıyor: {u['looking']}\n"
-            f"🧠 Bio: {u['bio'] or 'Yok'}"
+    elif query.data == "premium":
+        await query.edit_message_text(
+            "💎 Premium özellikler:\n\n"
+            "✔ Özel komutlar\n"
+            "✔ Öncelikli destek\n\n"
+            "Premium almak için adminle iletişime geç.",
+            reply_markup=main_menu()
         )
 
-        kb = [
-            [InlineKeyboardButton("👩 Kadın", callback_data="g_k"),
-             InlineKeyboardButton("👨 Erkek", callback_data="g_e")],
-            [InlineKeyboardButton("18", callback_data="a_18"),
-             InlineKeyboardButton("19+", callback_data="a_19")],
-            [InlineKeyboardButton("❤️ Erkek", callback_data="l_e"),
-             InlineKeyboardButton("❤️ Kadın", callback_data="l_k")],
-            [InlineKeyboardButton("✏️ Bio Yaz", callback_data="bio")],
-            [InlineKeyboardButton("✅ Kaydet", callback_data="save")]
-        ]
+    elif query.data == "support":
+        await query.edit_message_text(
+            "📞 Destek\n\n"
+            "Sorun için adminle iletişime geç.",
+            reply_markup=main_menu()
+        )
 
-        await q.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-
-    elif q.data.startswith("g_"):
-        users[uid]["gender"] = "Kadın" if "k" in q.data else "Erkek"
-        await q.message.reply_text("✅ Cinsiyet kaydedildi")
-
-    elif q.data.startswith("a_"):
-        users[uid]["age"] = "18" if "18" in q.data else "19+"
-        await q.message.reply_text("✅ Yaş kaydedildi")
-
-    elif q.data.startswith("l_"):
-        users[uid]["looking"] = "Erkek" if "e" in q.data else "Kadın"
-        await q.message.reply_text("✅ Aradığı kaydedildi")
-
-    elif q.data == "bio":
-        await q.message.reply_text("✏️ Bio yaz:")
-        context.user_data["bio"] = True
-
-    elif q.data == "save":
-        u = users[uid]
-        if None in (u["gender"], u["age"], u["looking"]):
-            await q.message.reply_text("❌ Profil eksik!")
-        else:
-            await q.message.reply_text("✅ Profil kaydedildi!")
-
-    elif q.data == "find":
-        await find_partner(q, context)
-
-# ------------------ SOHBET ------------------
-async def find_partner(q, context):
-    uid = q.from_user.id
-
-    if not users[uid]["premium"]:
-        count = daily_limit.get(uid, 0)
-        if count >= DAILY_FREE_LIMIT:
-            await q.message.reply_text("⛔ Günlük limit doldu. Premium al.")
-            return
-        daily_limit[uid] = count + 1
-
-    if uid in chats:
-        await q.message.reply_text("⚠️ Zaten sohbettesin.")
+# ======================
+# ADMIN KOMUTLARI
+# ======================
+async def add_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
         return
 
-    for other in waiting:
-        if users[other]["gender"] == users[uid]["looking"]:
-            waiting.remove(other)
-            chats[uid] = other
-            chats[other] = uid
-
-            await context.bot.send_message(other, "✅ Partner bulundu!")
-            await q.message.reply_text("✅ Partner bulundu!")
-            return
-
-    waiting.append(uid)
-    await q.message.reply_text("⏳ Partner aranıyor...")
-
-# ------------------ MESAJLAR ------------------
-async def messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    text = update.message.text
-
-    if context.user_data.get("bio"):
-        users[uid]["bio"] = text[:50]
-        context.user_data["bio"] = False
-        await update.message.reply_text("✅ Bio kaydedildi")
+    if not context.args:
+        await update.message.reply_text("Kullanıcı ID gir.")
         return
 
-    if uid not in chats:
+    uid = int(context.args[0])
+    premium_users.add(uid)
+    await update.message.reply_text(f"✅ {uid} premium yapıldı.")
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
         return
 
-    for w in bad_words:
-        if w in text.lower():
-            await update.message.reply_text("🚫 Küfür yasak!")
-            return
+    await update.message.reply_text(
+        f"📊 İstatistikler\n\n"
+        f"👥 Toplam kullanıcı: {len(users)}\n"
+        f"💎 Premium: {len(premium_users)}"
+    )
 
-    await context.bot.send_message(chats[uid], text)
+# ======================
+# NORMAL MESAJ
+# ======================
+async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Menüyü kullan kral 👑",
+        reply_markup=main_menu()
+    )
 
-# ------------------ KOMUTLAR ------------------
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if uid in chats:
-        other = chats.pop(uid)
-        chats.pop(other, None)
-        await context.bot.send_message(other, "❌ Partner ayrıldı")
-        await update.message.reply_text("❌ Sohbet bitti")
-
-async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await stop(update, context)
-    fake = type("obj", (), {"from_user": update.effective_user, "message": update.message})
-    await find_partner(fake, context)
-
-# ------------------ MAIN ------------------
+# ======================
+# MAIN
+# ======================
 def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stop", stop))
-    app.add_handler(CommandHandler("next", next_chat))
+    app.add_handler(CommandHandler("addpremium", add_premium))
+    app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CallbackQueryHandler(buttons))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, messages))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
-    print("🔥 Bot aktif")
+    print("👑 Bot full şekilde çalışıyor")
     app.run_polling()
 
 if __name__ == "__main__":
