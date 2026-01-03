@@ -2,7 +2,7 @@ from telegram import *
 from telegram.ext import *
 import time
 
-TOKEN = "8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s" 
+TOKEN = "8403759105:AAEs7u9LZqQX7bWhITpFpZjG57-zz1ekG7s"
 
 # ------------------ VERİLER ------------------
 users = {}
